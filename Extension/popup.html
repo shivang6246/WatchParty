@@ -1,0 +1,409 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>WatchParty — Watch Together</title>
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link
+      href="https://fonts.googleapis.com/icon?family=Material+Icons+Round"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <!-- ═══════════════════ GLOBAL LOADER ═══════════════════ -->
+    <div id="global-loader" class="global-loader hidden">
+      <div class="spinner"></div>
+    </div>
+
+    <div class="app">
+      <!-- ═══════════════════ HEADER ═══════════════════ -->
+      <header class="app-header">
+        <div class="logo">
+          <span class="logo-icon">🍿</span>
+          <span class="logo-text">WatchParty</span>
+        </div>
+        <p class="tagline">Sync. Chat. Watch together.</p>
+      </header>
+
+      <!-- ═══════════════════ LOGIN VIEW ═══════════════════ -->
+      <section id="login-view" class="view active">
+        <div class="view-card glass">
+          <h2 class="view-title">Welcome back</h2>
+          <p class="view-subtitle">Sign in to join the party</p>
+
+          <form id="login-form" class="form" autocomplete="off">
+            <div class="input-group">
+              <span class="material-icons-round input-icon">mail</span>
+              <input
+                type="email"
+                id="login-email"
+                placeholder="Email address"
+                required
+              />
+            </div>
+            <div class="input-group">
+              <span class="material-icons-round input-icon">lock</span>
+              <input
+                type="password"
+                id="login-password"
+                placeholder="Password"
+                required
+                minlength="3"
+              />
+            </div>
+
+            <button type="submit" id="login-btn" class="btn btn-primary">
+              <span class="btn-text">Sign In</span>
+              <span class="btn-loader hidden">
+                <span class="dot-pulse"></span>
+              </span>
+            </button>
+          </form>
+
+          <div class="divider"><span>or</span></div>
+
+          <button id="goto-register" class="btn btn-ghost">
+            Create an account
+          </button>
+        </div>
+      </section>
+
+      <!-- ═══════════════════ REGISTER VIEW ═══════════════════ -->
+      <section id="register-view" class="view">
+        <div class="view-card glass">
+          <h2 class="view-title">Create account</h2>
+          <p class="view-subtitle">Start your watch party in seconds</p>
+
+          <form id="register-form" class="form" autocomplete="off">
+            <div class="input-group">
+              <span class="material-icons-round input-icon">person</span>
+              <input
+                type="text"
+                id="register-username"
+                placeholder="Username"
+                required
+                minlength="3"
+                maxlength="20"
+              />
+            </div>
+            <div class="input-group">
+              <span class="material-icons-round input-icon">mail</span>
+              <input
+                type="email"
+                id="register-email"
+                placeholder="Email address"
+                required
+              />
+            </div>
+            <div class="input-group">
+              <span class="material-icons-round input-icon">lock</span>
+              <input
+                type="password"
+                id="register-password"
+                placeholder="Password (min 3 chars)"
+                required
+                minlength="3"
+              />
+            </div>
+
+            <button type="submit" id="register-btn" class="btn btn-primary">
+              <span class="btn-text">Create Account</span>
+              <span class="btn-loader hidden">
+                <span class="dot-pulse"></span>
+              </span>
+            </button>
+          </form>
+
+          <div class="divider"><span>or</span></div>
+
+          <button id="goto-login" class="btn btn-ghost">
+            Already have an account? Sign in
+          </button>
+        </div>
+      </section>
+
+      <!-- ═══════════════════ DASHBOARD VIEW ═══════════════════ -->
+      <section id="dashboard-view" class="view">
+        <div class="view-card glass">
+          <!-- User info strip -->
+          <div class="user-strip">
+            <div class="avatar" id="user-avatar">U</div>
+            <div class="user-meta">
+              <span class="user-name" id="user-display-name">Username</span>
+              <span class="user-email" id="user-display-email"
+                >user@email.com</span
+              >
+            </div>
+            <button id="logout-btn" class="icon-btn" title="Logout">
+              <span class="material-icons-round">logout</span>
+            </button>
+          </div>
+
+          <!-- Detected video indicator -->
+          <div id="detected-video-card" class="now-playing-card hidden">
+            <div class="now-playing-icon">
+              <span class="material-icons-round">play_circle</span>
+            </div>
+            <div class="now-playing-info">
+              <span class="now-playing-label">Detected Video</span>
+              <span class="now-playing-title" id="detected-video-title">—</span>
+              <span class="now-playing-platform" id="detected-video-platform">—</span>
+            </div>
+            <span class="now-playing-dot"></span>
+          </div>
+
+          <div class="dashboard-actions">
+            <!-- Create room -->
+            <div class="action-card" id="create-room-card">
+              <div class="action-icon create">
+                <span class="material-icons-round">add_circle</span>
+              </div>
+              <div class="action-info">
+                <h3>Create Room</h3>
+                <p>Start a new watch party</p>
+              </div>
+              <span class="material-icons-round action-arrow"
+                >arrow_forward_ios</span
+              >
+            </div>
+
+            <!-- Join room -->
+            <div class="action-card" id="join-room-card">
+              <div class="action-icon join">
+                <span class="material-icons-round">group_add</span>
+              </div>
+              <div class="action-info">
+                <h3>Join Room</h3>
+                <p>Enter a room code to join</p>
+              </div>
+              <span class="material-icons-round action-arrow"
+                >arrow_forward_ios</span
+              >
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ═══════════════════ CREATE ROOM VIEW ═══════════════════ -->
+      <section id="create-room-view" class="view">
+        <div class="view-card glass">
+          <button class="back-btn" id="back-to-dashboard-from-create">
+            <span class="material-icons-round">arrow_back</span>
+            <span>Back</span>
+          </button>
+
+          <h2 class="view-title">Create Room</h2>
+          <p class="view-subtitle">Set up your watch party</p>
+
+          <!-- Video auto-detected banner -->
+          <div id="create-room-video-banner" class="now-playing-card compact hidden">
+            <div class="now-playing-icon small">
+              <span class="material-icons-round">smart_display</span>
+            </div>
+            <div class="now-playing-info">
+              <span class="now-playing-label">Will be linked</span>
+              <span class="now-playing-title" id="create-room-video-title">—</span>
+            </div>
+            <span class="material-icons-round now-playing-check">check_circle</span>
+          </div>
+
+          <form id="create-room-form" class="form" autocomplete="off">
+            <div class="input-group">
+              <span class="material-icons-round input-icon">meeting_room</span>
+              <input
+                type="text"
+                id="room-name-input"
+                placeholder="Room name"
+                required
+                minlength="3"
+                maxlength="100"
+              />
+            </div>
+
+            <label class="toggle-row">
+              <span class="toggle-label">
+                <span class="material-icons-round">lock</span>
+                Private Room
+              </span>
+              <input type="checkbox" id="room-locked-toggle" />
+              <span class="toggle-slider"></span>
+            </label>
+
+            <button type="submit" id="create-room-btn" class="btn btn-primary">
+              <span class="btn-text">Create Party 🎉</span>
+              <span class="btn-loader hidden">
+                <span class="dot-pulse"></span>
+              </span>
+            </button>
+          </form>
+        </div>
+      </section>
+
+      <!-- ═══════════════════ JOIN ROOM VIEW ═══════════════════ -->
+      <section id="join-room-view" class="view">
+        <div class="view-card glass">
+          <button class="back-btn" id="back-to-dashboard-from-join">
+            <span class="material-icons-round">arrow_back</span>
+            <span>Back</span>
+          </button>
+
+          <h2 class="view-title">Join Room</h2>
+          <p class="view-subtitle">Enter the 6-digit room code</p>
+
+          <form id="join-room-form" class="form" autocomplete="off">
+            <div class="input-group code-input-group">
+              <span class="material-icons-round input-icon">vpn_key</span>
+              <input
+                type="text"
+                id="room-code-input"
+                placeholder="e.g. A1B2C3"
+                required
+                minlength="6"
+                maxlength="6"
+                style="text-transform: uppercase; letter-spacing: 4px; font-weight: 700"
+              />
+            </div>
+
+            <button type="submit" id="join-room-btn" class="btn btn-primary">
+              <span class="btn-text">Join Party 🚀</span>
+              <span class="btn-loader hidden">
+                <span class="dot-pulse"></span>
+              </span>
+            </button>
+          </form>
+        </div>
+      </section>
+
+      <!-- ═══════════════════ ROOM ACTIVE VIEW ═══════════════════ -->
+      <section id="room-view" class="view">
+        <div class="view-card glass">
+          <div class="room-header">
+            <div class="room-info">
+              <h2 class="room-name" id="active-room-name">Movie Night</h2>
+              <div class="room-code-badge">
+                <span class="material-icons-round">tag</span>
+                <span id="active-room-code">ABC123</span>
+                <button class="copy-btn" id="copy-code-btn" title="Copy code">
+                  <span class="material-icons-round">content_copy</span>
+                </button>
+              </div>
+            </div>
+            <div class="room-status-dot online"></div>
+          </div>
+
+          <!-- Now Playing section -->
+          <div id="room-video-section" class="now-playing-card room-video hidden">
+            <div class="now-playing-icon">
+              <span class="material-icons-round">smart_display</span>
+            </div>
+            <div class="now-playing-info">
+              <span class="now-playing-label">Now Playing</span>
+              <span class="now-playing-title" id="room-video-title">—</span>
+              <span class="now-playing-platform" id="room-video-platform">—</span>
+            </div>
+            <button class="btn-icon-sm" id="open-video-btn" title="Open video">
+              <span class="material-icons-round">open_in_new</span>
+            </button>
+          </div>
+
+          <div class="room-details">
+            <div class="detail-chip">
+              <span class="material-icons-round">person</span>
+              <span>Host: <strong id="active-room-host">—</strong></span>
+            </div>
+            <div class="detail-chip" id="room-lock-chip">
+              <span class="material-icons-round" id="room-lock-icon"
+                >lock_open</span
+              >
+              <span id="room-lock-text">Open</span>
+            </div>
+          </div>
+
+          <div class="room-tabs">
+            <button id="tab-members-btn" class="tab-btn active">
+              <span class="material-icons-round">people</span>
+              <span>Members</span>
+            </button>
+            <button id="tab-chat-btn" class="tab-btn">
+              <span class="material-icons-round">forum</span>
+              <span>Chat</span>
+              <span id="chat-tab-dot" class="tab-dot hidden"></span>
+            </button>
+          </div>
+
+          <!-- Members Panel -->
+          <div id="members-panel" class="tab-panel">
+            <!-- Members list -->
+            <div class="members-section">
+              <h3 class="section-label">
+                <span class="material-icons-round">people</span> Members
+              </h3>
+              <ul class="members-list" id="members-list">
+                <!-- Populated dynamically -->
+              </ul>
+            </div>
+
+            <!-- Invite link -->
+            <div class="invite-section">
+              <button id="get-invite-btn" class="btn btn-secondary">
+                <span class="material-icons-round">share</span>
+                <span class="btn-text">Get Invite Link</span>
+              </button>
+              <div id="invite-link-box" class="invite-link-box hidden">
+                <input type="text" id="invite-link-display" readonly />
+                <button class="copy-btn" id="copy-invite-btn" title="Copy link">
+                  <span class="material-icons-round">content_copy</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Chat Panel -->
+          <div id="chat-panel" class="tab-panel hidden">
+            <div class="chat-messages" id="chat-messages">
+              <!-- Populated dynamically -->
+            </div>
+            
+            <div id="chat-typing-indicator" class="chat-typing-indicator hidden">
+              <span id="chat-typing-text">Someone is typing</span>
+              <span class="typing-dots"><span>.</span><span>.</span><span>.</span></span>
+            </div>
+
+            <form id="chat-form" class="chat-form">
+              <input
+                type="text"
+                id="chat-input"
+                placeholder="Type a message..."
+                required
+                autocomplete="off"
+                maxlength="500"
+              />
+              <button type="submit" id="chat-send-btn" class="chat-send-btn" title="Send message">
+                <span class="material-icons-round">send</span>
+              </button>
+            </form>
+          </div>
+
+          <button id="leave-room-btn" class="btn btn-danger">
+            <span class="material-icons-round">exit_to_app</span>
+            <span>Leave Room</span>
+          </button>
+        </div>
+      </section>
+
+      <!-- ═══════════════════ TOAST ═══════════════════ -->
+      <div id="toast" class="toast hidden">
+        <span class="material-icons-round toast-icon">info</span>
+        <span id="toast-message">Message here</span>
+      </div>
+    </div>
+
+    <script src="api.js"></script>
+    <script src="popup.js"></script>
+  </body>
+</html>
