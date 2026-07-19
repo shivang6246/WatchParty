@@ -24,4 +24,8 @@ public class PlayBackEventdto {
     private Boolean buffering;
 
     private Long sequenceNumber;
+
+    private String videoUrl;
+
+    private String platform;
 }

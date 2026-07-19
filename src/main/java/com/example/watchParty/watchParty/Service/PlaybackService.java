@@ -100,6 +100,13 @@ public class PlaybackService {
                     room.setPlaybackSpeed(event.getPlaybackSpeed());
                 }
                 break;
+
+            case "VIDEO_CHANGED":
+                room.setVideoUrl(event.getVideoUrl());
+                room.setPlatform(event.getPlatform());
+                room.setCurrentTime(0.0);
+                room.setPlaying(false);
+                break;
         }
 
         // Increment sequence number for conflict resolution

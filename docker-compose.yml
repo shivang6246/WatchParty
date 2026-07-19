@@ -1,10 +1,10 @@
-version: '3.8'
+version: "3.8"
 
 services:
   app:
     build: .
     ports:
-      - "8080:8080"
+      - "8081:8080"
     environment:
       - DB_URL=jdbc:postgresql://postgres:5432/watchparty
       - DB_USERNAME=postgres

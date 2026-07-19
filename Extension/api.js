@@ -3,7 +3,7 @@
    Handles all communication with the Spring Boot backend
    ═══════════════════════════════════════════════════════════ */
 
-const API_BASE = "http://localhost:8080/api";
+const API_BASE_URL = "http://54.206.106.162:8081/api";
 
 // ── Storage Compatibility Layer ──────────────────────────
 // Falls back to localStorage when chrome.storage is unavailable
@@ -96,7 +96,7 @@ async function authHeaders() {
  * Returns the parsed JSON body or throws an error with the server message.
  */
 async function apiRequest(endpoint, options = {}) {
-  const url = `${API_BASE}${endpoint}`;
+  const url = `${API_BASE_URL}${endpoint}`;
   const headers = await authHeaders();
 
   // Create abort controller for request timeout

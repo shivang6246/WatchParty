@@ -620,27 +620,7 @@ $("#tab-chat-btn").addEventListener("click", () => {
   }
 });
 
-// Helper to send message to content script on active tab
-function sendToActiveTab(message, callback) {
-  if (typeof chrome === "undefined" || !chrome.tabs || !chrome.tabs.query) {
-    if (callback) callback({ ok: false, error: "Chrome tabs API unavailable" });
-    return;
-  }
-  chrome.tabs.query({ active: true, lastFocusedWindow: true }, (tabs) => {
-    if (tabs && tabs.length > 0) {
-      chrome.tabs.sendMessage(tabs[0].id, message, (response) => {
-        if (chrome.runtime.lastError) {
-          console.warn("sendToActiveTab error:", chrome.runtime.lastError.message);
-          if (callback) callback({ ok: false, error: chrome.runtime.lastError.message });
-        } else {
-          if (callback) callback(response);
-        }
-      });
-    } else {
-      if (callback) callback({ ok: false, error: "No active tabs found" });
-    }
-  });
-}
+
 
 // Chat Form submit
 $("#chat-form").addEventListener("submit", (e) => {
@@ -665,11 +645,16 @@ $("#chat-form").addEventListener("submit", (e) => {
   input.value = "";
   sendTypingStatus(false);
 
-  // 2. Send over active tab relay in background
-  sendToActiveTab({
+  // 2. Send directly to background worker
+  chrome.runtime.sendMessage({
     type: "SEND_CHAT_MESSAGE",
-    messageText: text
+    messageText: text,
+    username: currentUserEmail,
+    roomCode: $("#active-room-code").textContent
   }, (res) => {
+    if (chrome.runtime.lastError) {
+      console.warn("Error sending chat to background:", chrome.runtime.lastError.message);
+    }
     if (!res || !res.ok) {
       // Mark bubble as failed if transmission fails
       const el = $(`[data-msg-id="${tempId}"]`);
@@ -677,7 +662,10 @@ $("#chat-form").addEventListener("submit", (e) => {
         el.classList.add("failed");
         el.classList.remove("optimistic");
       }
-      toast("Failed to send message", "error");
+      chrome.storage.local.get(["wsStatus", "wsError"], (stored) => {
+        const errDetail = stored.wsError || res?.error || "Connection to background failed";
+        toast("Failed: " + errDetail, "error");
+      });
     }
   });
 });
@@ -690,9 +678,11 @@ function sendTypingStatus(isTyping) {
   if (isCurrentlyTyping === isTyping) return;
   isCurrentlyTyping = isTyping;
 
-  sendToActiveTab({
+  chrome.runtime.sendMessage({
     type: "SEND_TYPING_STATUS",
-    typing: isTyping
+    typing: isTyping,
+    username: currentUserEmail,
+    roomCode: $("#active-room-code").textContent
   });
 }
 
@@ -708,6 +698,13 @@ $("#chat-input").addEventListener("input", () => {
 if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.onMessage) {
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const activeRoomCode = $("#active-room-code").textContent;
+
+    if (message.type === "ROOM_VIDEO_CHANGED") {
+      if (activeRoomCode) {
+        console.log("Popup received ROOM_VIDEO_CHANGED, reloading room view");
+        loadRoomView(activeRoomCode);
+      }
+    }
 
     if (message.type === "RECEIVE_CHAT_MESSAGE") {
       const msg = message.message;

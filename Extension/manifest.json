@@ -13,6 +13,9 @@
 
   "host_permissions": [
     "http://localhost:8080/*",
+    "ws://localhost:8080/*",
+    "http://54.206.106.162:8081/*",
+    "ws://54.206.106.162:8081/*",
     "https://*.youtube.com/*",
     "https://*.netflix.com/*"
   ],

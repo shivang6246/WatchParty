@@ -1,123 +1,19 @@
 /**
- * A lightweight, dependency-free STOMP over WebSocket client.
- * Bundled inside content.js to ensure reliable scope.
+ * WatchParty Content Script
+ * Manages video state listeners, programmatically seeks/plays/pauses YouTube & Netflix videos,
+ * and relays video control events to the extension background script.
  */
-class StompClient {
-  constructor(url, headers = {}) {
-    this.url = url;
-    this.headers = headers;
-    this.subscriptions = {};
-    this.socket = null;
-    this.connected = false;
-    this.onConnect = null;
-    this.onError = null;
-    this.onDisconnect = null;
-  }
-
-  connect() {
-    console.log("StompClient connecting to:", this.url);
-    try {
-      this.socket = new WebSocket(this.url);
-    } catch (err) {
-      console.error("StompClient connection failed to initialize:", err);
-      if (this.onError) this.onError(err);
-      return;
-    }
-
-    this.socket.onopen = () => {
-      let headersStr = "";
-      for (let key in this.headers) {
-        headersStr += `${key}:${this.headers[key]}\n`;
-      }
-      this.socket.send(`CONNECT\naccept-version:1.1,1.2\n${headersStr}\n\u0000`);
-    };
-
-    this.socket.onmessage = (event) => {
-      const data = event.data;
-      const commandEnd = data.indexOf("\n");
-      if (commandEnd === -1) return;
-      const command = data.substring(0, commandEnd).trim();
-
-      if (command === "CONNECTED") {
-        console.log("StompClient CONNECTED successfully");
-        this.connected = true;
-        if (this.onConnect) this.onConnect();
-        
-        for (let subId in this.subscriptions) {
-          this.socket.send(`SUBSCRIBE\nid:${subId}\ndestination:${this.subscriptions[subId].destination}\n\n\u0000`);
-        }
-      } else if (command === "MESSAGE") {
-        const bodyStart = data.indexOf("\n\n") + 2;
-        const body = data.substring(bodyStart, data.lastIndexOf("\u0000")).trim();
-
-        const headersSection = data.substring(commandEnd + 1, bodyStart - 2);
-        const headers = {};
-        headersSection.split("\n").forEach((line) => {
-          const parts = line.split(":");
-          if (parts.length >= 2) {
-            headers[parts[0].trim()] = parts.slice(1).join(":").trim();
-          }
-        });
-
-        const subId = headers["subscription"];
-        if (this.subscriptions[subId] && this.subscriptions[subId].callback) {
-          try {
-            this.subscriptions[subId].callback(JSON.parse(body));
-          } catch (e) {
-            this.subscriptions[subId].callback(body);
-          }
-        }
-      }
-    };
-
-    this.socket.onerror = (err) => {
-      console.error("StompClient socket error:", err);
-      if (this.onError) this.onError(err);
-    };
-
-    this.socket.onclose = () => {
-      console.log("StompClient disconnected");
-      this.connected = false;
-      if (this.onDisconnect) this.onDisconnect();
-    };
-  }
-
-  subscribe(destination, callback) {
-    const subId = "sub-" + Math.random().toString(36).substring(2, 9);
-    this.subscriptions[subId] = { destination, callback };
-    if (this.connected) {
-      this.socket.send(`SUBSCRIBE\nid:${subId}\ndestination:${destination}\n\n\u0000`);
-    }
-    return {
-      unsubscribe: () => {
-        delete this.subscriptions[subId];
-        if (this.connected) {
-          this.socket.send(`UNSUBSCRIBE\nid:${subId}\n\n\u0000`);
-        }
-      },
-    };
-  }
-
-  send(destination, body) {
-    if (this.connected) {
-      this.socket.send(
-        `SEND\ndestination:${destination}\ncontent-type:application/json\n\n${JSON.stringify(body)}\u0000`
-      );
-    } else {
-      console.warn("StompClient cannot send. Not connected.");
-    }
-  }
-
-  disconnect() {
-    if (this.socket) {
-      this.socket.close();
-    }
-  }
-}
 
 console.log("WatchParty content script loaded!");
 
 const hostname = window.location.hostname;
+
+function getActiveVideoElement() {
+  if (hostname.includes("youtube.com")) {
+    return document.querySelector("ytd-player video, #movie_player video") || document.querySelector("video");
+  }
+  return document.querySelector("video");
+}
 
 let platform = null;
 let videoId = null;
@@ -135,11 +31,9 @@ if (hostname.includes("netflix.com")) {
 console.log("Platform:", platform);
 console.log("Video ID:", videoId);
 
-// ── WebSocket & STOMP Sync State ─────────────────────────
-let stompClient = null;
+// ── Sync State ─────────────────────────
 let currentRoom = null;
 let currentRoomHost = null;
-let token = null;
 let username = null;
 let isHost = false;
 let isApplyingIncomingEvent = false;
@@ -147,8 +41,8 @@ let isApplyingIncomingEvent = false;
 // ── Respond to on-demand queries from popup / background ──
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "GET_VIDEO_INFO") {
-    const video = document.querySelector("video");
-    
+    const video = getActiveVideoElement();
+
     // Dynamically update for SPA navigations
     if (hostname.includes("youtube.com")) {
       platform = "YOUTUBE";
@@ -157,7 +51,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       platform = "NETFLIX";
       videoId = window.location.pathname.split("/watch/")[1];
     }
-    
+
     sendResponse({
       platform,
       videoId,
@@ -172,7 +66,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === "SEEK_TO") {
-    const video = document.querySelector("video");
+    const video = getActiveVideoElement();
     if (video && typeof message.currentTime === "number") {
       video.currentTime = message.currentTime;
     }
@@ -181,44 +75,28 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === "PLAY_VIDEO") {
-    const video = document.querySelector("video");
+    const video = getActiveVideoElement();
     if (video) video.play();
     sendResponse({ ok: true });
     return true;
   }
 
   if (message.type === "PAUSE_VIDEO") {
-    const video = document.querySelector("video");
+    const video = getActiveVideoElement();
     if (video) video.pause();
     sendResponse({ ok: true });
     return true;
   }
 
-  if (message.type === "SEND_CHAT_MESSAGE") {
-    if (stompClient && stompClient.connected) {
-      stompClient.send("/app/chat", {
-        roomCode: currentRoom,
-        username: username,
-        message: message.messageText
-      });
-      sendResponse({ ok: true });
-    } else {
-      sendResponse({ ok: false, error: "WebSocket not connected" });
-    }
+  if (message.type === "APPLY_PLAYBACK_EVENT") {
+    handleIncomingPlaybackEvent(message.event);
+    sendResponse({ ok: true });
     return true;
   }
 
-  if (message.type === "SEND_TYPING_STATUS") {
-    if (stompClient && stompClient.connected) {
-      stompClient.send("/app/typing", {
-        roomCode: currentRoom,
-        username: username,
-        typing: message.typing
-      });
-      sendResponse({ ok: true });
-    } else {
-      sendResponse({ ok: false });
-    }
+  if (message.type === "APPLY_SYNC_STATE") {
+    handleIncomingSyncState(message.state);
+    sendResponse({ ok: true });
     return true;
   }
 });
@@ -228,9 +106,12 @@ function playVideoProgrammatically(video) {
   if (video && video.paused) {
     console.log("Applying remote PLAY event");
     isApplyingIncomingEvent = true;
-    video.play()
+    video
+      .play()
       .then(() => {
-        setTimeout(() => { isApplyingIncomingEvent = false; }, 200);
+        setTimeout(() => {
+          isApplyingIncomingEvent = false;
+        }, 200);
       })
       .catch((err) => {
         console.warn("Play failed:", err);
@@ -244,7 +125,9 @@ function pauseVideoProgrammatically(video) {
     console.log("Applying remote PAUSE event");
     isApplyingIncomingEvent = true;
     video.pause();
-    setTimeout(() => { isApplyingIncomingEvent = false; }, 200);
+    setTimeout(() => {
+      isApplyingIncomingEvent = false;
+    }, 200);
   }
 }
 
@@ -253,7 +136,9 @@ function seekVideoProgrammatically(video, time) {
     console.log(`Applying remote SEEK event to ${time.toFixed(2)}s`);
     isApplyingIncomingEvent = true;
     video.currentTime = time;
-    setTimeout(() => { isApplyingIncomingEvent = false; }, 200);
+    setTimeout(() => {
+      isApplyingIncomingEvent = false;
+    }, 200);
   }
 }
 
@@ -262,7 +147,7 @@ function setupVideoEventListeners(video) {
   video.addEventListener("play", () => {
     if (isApplyingIncomingEvent) return;
     if (!isHost) return;
-    
+
     console.log("Local Host PLAY event detected");
     sendPlaybackEvent("PLAY", video.currentTime);
   });
@@ -270,7 +155,7 @@ function setupVideoEventListeners(video) {
   video.addEventListener("pause", () => {
     if (isApplyingIncomingEvent) return;
     if (!isHost) return;
-    
+
     console.log("Local Host PAUSE event detected");
     sendPlaybackEvent("PAUSE", video.currentTime);
   });
@@ -278,7 +163,7 @@ function setupVideoEventListeners(video) {
   video.addEventListener("seeked", () => {
     if (isApplyingIncomingEvent) return;
     if (!isHost) return;
-    
+
     console.log("Local Host SEEK event detected");
     sendPlaybackEvent("SEEK", video.currentTime);
   });
@@ -286,32 +171,39 @@ function setupVideoEventListeners(video) {
   video.addEventListener("ratechange", () => {
     if (isApplyingIncomingEvent) return;
     if (!isHost) return;
-    
+
     console.log("Local Host SPEED_CHANGE event detected");
     sendPlaybackEvent("SPEED_CHANGE", video.currentTime);
   });
 }
 
-// ── WebSocket/STOMP Connections ──────────────────────────
+// ── Outgoing Playback Events ──────────────────────────
 function sendPlaybackEvent(eventType, currentTime) {
-  if (!stompClient || !stompClient.connected) return;
-
-  const video = document.querySelector("video");
+  const video = getActiveVideoElement();
   const speed = video ? video.playbackRate : 1.0;
 
-  stompClient.send("/app/playback", {
-    roomCode: currentRoom,
-    username: username,
+  // #region agent log
+  chrome.runtime.sendMessage({
+    type: "DEBUG_LOG",
+    location: "content.js:sendPlaybackEvent",
+    logMessage: "Host sending playback event",
+    data: { eventType, currentTime, isHost, currentRoom },
+    hypothesisId: "C",
+  }, () => { if (chrome.runtime.lastError) { /* ignore */ } });
+  // #endregion
+
+  chrome.runtime.sendMessage({
+    type: "SEND_PLAYBACK_EVENT",
     eventType: eventType,
     currentTime: currentTime,
-    playbackSpeed: speed
+    playbackSpeed: speed,
   });
 }
 
 function handleIncomingPlaybackEvent(event) {
   if (event.username === username) return; // ignore our own events
 
-  const video = document.querySelector("video");
+  const video = getActiveVideoElement();
   if (!video) return;
 
   console.log("Incoming remote playback event:", event);
@@ -341,14 +233,16 @@ function handleIncomingPlaybackEvent(event) {
       if (typeof event.playbackSpeed === "number") {
         isApplyingIncomingEvent = true;
         video.playbackRate = event.playbackSpeed;
-        setTimeout(() => { isApplyingIncomingEvent = false; }, 200);
+        setTimeout(() => {
+          isApplyingIncomingEvent = false;
+        }, 200);
       }
       break;
   }
 }
 
 function handleIncomingSyncState(state) {
-  const video = document.querySelector("video");
+  const video = getActiveVideoElement();
   if (!video) return;
 
   console.log("Incoming remote sync state:", state);
@@ -382,77 +276,9 @@ function handleIncomingSyncState(state) {
   if (typeof state.playbackSpeed === "number") {
     isApplyingIncomingEvent = true;
     video.playbackRate = state.playbackSpeed;
-    setTimeout(() => { isApplyingIncomingEvent = false; }, 200);
-  }
-}
-
-function connectWebSocket() {
-  if (stompClient && stompClient.connected) return;
-
-  console.log(`Connecting to WatchParty WS for room: ${currentRoom}`);
-  
-  stompClient = new StompClient("ws://localhost:8080/ws", {
-    "Authorization": "Bearer " + token,
-    "roomCode": currentRoom
-  });
-
-  stompClient.onConnect = () => {
-    console.log("WS connected successfully!");
-
-    stompClient.subscribe(`/topic/room/${currentRoom}`, (event) => {
-      handleIncomingPlaybackEvent(event);
-    });
-
-    stompClient.subscribe(`/topic/room/${currentRoom}/sync`, (state) => {
-      handleIncomingSyncState(state);
-    });
-
-    stompClient.subscribe(`/topic/room/${currentRoom}/chat`, (chatMsg) => {
-      console.log("WS chat message received:", chatMsg);
-      chrome.runtime.sendMessage({
-        type: "RECEIVE_CHAT_MESSAGE",
-        message: chatMsg
-      });
-    });
-
-    stompClient.subscribe(`/topic/room/${currentRoom}/typing`, (typingIndicator) => {
-      chrome.runtime.sendMessage({
-        type: "RECEIVE_TYPING_STATUS",
-        indicator: typingIndicator
-      });
-    });
-
-    if (!isHost) {
-      console.log("Sending SYNC_REQUEST as viewer");
-      stompClient.send("/app/playback", {
-        roomCode: currentRoom,
-        username: username,
-        eventType: "SYNC_REQUEST"
-      });
-    }
-  };
-
-  stompClient.onError = (err) => {
-    console.error("WS error:", err);
-  };
-
-  stompClient.onDisconnect = () => {
-    console.log("WS disconnected. Will attempt retry in 5s...");
     setTimeout(() => {
-      if (currentRoom && token) {
-        connectWebSocket();
-      }
-    }, 5000);
-  };
-
-  stompClient.connect();
-}
-
-function disconnectWebSocket() {
-  if (stompClient) {
-    console.log("Disconnecting WatchParty WS client");
-    stompClient.disconnect();
-    stompClient = null;
+      isApplyingIncomingEvent = false;
+    }, 200);
   }
 }
 
@@ -460,55 +286,104 @@ async function initSync() {
   const data = await chrome.storage.local.get([
     "currentRoom",
     "currentRoomHost",
-    "jwt",
-    "username"
+    "username",
   ]);
-
-  const oldRoom = currentRoom;
 
   currentRoom = data.currentRoom;
   currentRoomHost = data.currentRoomHost;
-  token = data.jwt;
   username = data.username;
-  isHost = (currentRoomHost && username && currentRoomHost.toLowerCase() === username.toLowerCase());
+  isHost =
+    currentRoomHost &&
+    username &&
+    currentRoomHost.toLowerCase() === username.toLowerCase();
 
-  console.log("WatchParty initSync configuration:", { currentRoom, isHost, username });
+  console.log("WatchParty initSync configuration:", {
+    currentRoom,
+    isHost,
+    username,
+  });
 
-  if (oldRoom && oldRoom !== currentRoom) {
-    disconnectWebSocket();
-  }
+  // #region agent log
+  chrome.runtime.sendMessage({
+    type: "DEBUG_LOG",
+    location: "content.js:initSync",
+    logMessage: "Content script sync init",
+    data: { currentRoom, isHost, username, hasVideo: !!getActiveVideoElement() },
+    hypothesisId: "C",
+  }, () => { if (chrome.runtime.lastError) { /* ignore */ } });
+  // #endregion
 
-  const video = document.querySelector("video");
-  if (currentRoom && token && video) {
-    connectWebSocket();
-  } else {
-    disconnectWebSocket();
+  const video = getActiveVideoElement();
+  if (currentRoom && video) {
+    console.log("Requesting sync from background script");
+    chrome.runtime.sendMessage({ type: "REQUEST_SYNC" });
   }
 }
 
 // Watch storage shifts (joining/leaving rooms, login changes)
 chrome.storage.onChanged.addListener((changes) => {
-  if (changes.currentRoom || changes.currentRoomHost || changes.jwt || changes.username) {
+  if (
+    changes.currentRoom ||
+    changes.currentRoomHost ||
+    changes.jwt ||
+    changes.username
+  ) {
     initSync();
   }
 });
 
-// ── Startup Wait for Video ──
-const waitForVideo = setInterval(() => {
-  const video = document.querySelector("video");
+// ── Continuous Observer for SPA Navigation & Video Detection ──
+let lastUrl = location.href;
 
-  if (video) {
-    clearInterval(waitForVideo);
-    console.log("Video element detected");
+function checkPageChange() {
+  const currentUrl = location.href;
+  if (currentUrl !== lastUrl) {
+    lastUrl = currentUrl;
+    console.log("URL change detected:", currentUrl);
     
-    // Notify background script
+    // Re-parse videoId for the new video page
+    if (hostname.includes("youtube.com")) {
+      platform = "YOUTUBE";
+      videoId = new URLSearchParams(window.location.search).get("v");
+    } else if (hostname.includes("netflix.com")) {
+      platform = "NETFLIX";
+      videoId = window.location.pathname.split("/watch/")[1];
+    }
+    
+    // Notify background script of the new video ID
     chrome.runtime.sendMessage({
       type: "VIDEO_DETECTED",
       platform,
       videoId,
     });
 
-    setupVideoEventListeners(video);
+    chrome.storage.local.get(["currentRoom", "currentRoomHost", "username"], (data) => {
+      const room = data.currentRoom;
+      const host = data.currentRoomHost;
+      const user = data.username;
+      const hostIsCurrentUser = host && user && host.toLowerCase() === user.toLowerCase();
+      if (hostIsCurrentUser && room) {
+        console.log("Host changed video, notifying room:", currentUrl);
+        chrome.runtime.sendMessage({
+          type: "HOST_VIDEO_CHANGED",
+          videoUrl: currentUrl,
+          platform: platform
+        });
+      }
+    });
+    
+    // Reset/re-initialize sync for the new video URL
     initSync();
   }
-}, 1000);
+
+  const video = getActiveVideoElement();
+  if (video && !video.__wp_listeners_attached) {
+    console.log("Video element detected, attaching playback listeners");
+    setupVideoEventListeners(video);
+    video.__wp_listeners_attached = true;
+    initSync();
+  }
+}
+
+// Check every second to catch SPA transitions or delayed element rendering
+setInterval(checkPageChange, 1000);
