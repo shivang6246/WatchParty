@@ -4,6 +4,7 @@ import com.example.watchParty.watchParty.DTO.AuthResponseDto;
 import com.example.watchParty.watchParty.DTO.LoginRequestDto;
 import com.example.watchParty.watchParty.DTO.RegisterRequestDto;
 import com.example.watchParty.watchParty.Entity.User;
+import com.example.watchParty.watchParty.Enum.AuthProvider;
 import com.example.watchParty.watchParty.Enum.Role;
 import com.example.watchParty.watchParty.Repository.UserRepo;
 import com.example.watchParty.watchParty.Security.jwtService;
@@ -64,6 +65,7 @@ public class AuthService {
         user.setEmail(request.getEmail());
         user.setPassword(passwordEncoder.encode(request.getPassword()));
         user.setRole(Role.USER);
+        user.setAuthProvider(AuthProvider.LOCAL);
         user.setCreatedAt(LocalDateTime.now());
         user.setUpdatedAt(LocalDateTime.now());
 

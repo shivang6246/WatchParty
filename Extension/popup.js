@@ -29,6 +29,7 @@ let detectedVideo = null; // { platform, videoId, videoUrl, title }
 function showView(view) {
   $$(".view").forEach((v) => v.classList.remove("active"));
   view.classList.add("active");
+  document.body.classList.toggle("in-room", view === roomView);
   // Re-trigger animation
   view.style.animation = "none";
   // Force reflow
@@ -110,23 +111,16 @@ async function detectActiveTabVideo() {
     }, 2000);
 
     try {
+      // Not finding a video is normal (user is on another tab), so this stays out of toasts
       chrome.runtime.sendMessage({ type: "GET_ACTIVE_TAB_VIDEO" }, (response) => {
         clearTimeout(timeout);
         if (chrome.runtime.lastError) {
           console.warn("detectActiveTabVideo lastError:", chrome.runtime.lastError.message);
-          toast("Extension Error: " + chrome.runtime.lastError.message, "error");
           resolve();
           return;
         }
-        if (!response) {
-          toast("No response from background script", "error");
-          resolve();
-          return;
-        }
-        if (!response.hasVideo) {
-          const debugMsg = response.debug || "No video playing";
-          const urlSnippet = response.url ? ` (URL: ${response.url.substring(0, 30)}...)` : "";
-          toast(`${debugMsg}${urlSnippet}`, "info");
+        if (!response || !response.hasVideo) {
+          console.log("No video on active tab:", response && response.debug, response && response.url);
           resolve();
           return;
         }
@@ -140,7 +134,6 @@ async function detectActiveTabVideo() {
       });
     } catch (e) {
       clearTimeout(timeout);
-      toast("Error checking video: " + e.message, "error");
       console.warn("detectActiveTabVideo error:", e);
       resolve();
     }
@@ -302,6 +295,37 @@ $("#register-form").addEventListener("submit", async (e) => {
 });
 
 // ═══════════════════════════════════════════════════════════
+//  AUTH — GOOGLE OAUTH2
+// ═══════════════════════════════════════════════════════════
+
+async function handleGoogleLogin(btn) {
+  setLoading(btn, true);
+  try {
+    await apiGoogleLogin();
+    toast("Welcome! 🎉", "success");
+    await populateUserInfo();
+
+    // Detect video after login
+    await detectActiveTabVideo();
+    updateVideoUI();
+
+    showView(dashboardView);
+  } catch (err) {
+    toast(err.message || "Google sign-in failed", "error");
+  } finally {
+    setLoading(btn, false);
+  }
+}
+
+$("#google-login-btn").addEventListener("click", function () {
+  handleGoogleLogin(this);
+});
+
+$("#google-register-btn").addEventListener("click", function () {
+  handleGoogleLogin(this);
+});
+
+// ═══════════════════════════════════════════════════════════
 //  VIEW TOGGLES
 // ═══════════════════════════════════════════════════════════
 
@@ -383,7 +407,7 @@ $("#join-room-form").addEventListener("submit", async (e) => {
   try {
     const room = await apiJoinRoom(roomCode);
     toast(`Joined "${room.roomName}"!`, "success");
-    await loadRoomView(room.roomCode);
+    await loadRoomView(room.roomCode, { justJoined: true });
   } catch (err) {
     toast(err.message || "Failed to join room", "error");
   } finally {
@@ -395,7 +419,90 @@ $("#join-room-form").addEventListener("submit", async (e) => {
 //  ROOM VIEW
 // ═══════════════════════════════════════════════════════════
 
-async function loadRoomView(roomCode) {
+let roomVideoUrl = null;
+
+// The stored usernames are emails; the local part reads better in a 380px popup
+function displayName(username) {
+  return (username || "").split("@")[0] || username || "";
+}
+
+function renderRoomVideo(videoUrl, platform) {
+  roomVideoUrl = videoUrl || null;
+  const videoSection = $("#room-video-section");
+  if (!videoUrl) {
+    videoSection.classList.add("hidden");
+    return;
+  }
+  videoSection.classList.remove("hidden");
+  const vid = getVideoIdFromUrl(videoUrl, platform);
+  $("#room-video-title").textContent =
+    platform === "YOUTUBE" && vid ? `YouTube Video (${vid})` : cleanVideoTitle(videoUrl);
+  $("#room-video-platform").textContent = platform || "Video";
+}
+
+const CONNECTION_LABELS = {
+  connected: ["online", "Connected: playback is syncing"],
+  connecting: ["connecting", "Connecting to the sync server…"],
+};
+
+function renderConnectionStatus(status) {
+  const [cls, label] = CONNECTION_LABELS[status] || ["offline", "Disconnected: playback is not syncing"];
+  const dot = $(".room-status-dot");
+  dot.classList.remove("online", "connecting", "offline");
+  dot.classList.add(cls);
+  dot.title = label;
+}
+
+if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.onChanged) {
+  chrome.storage.onChanged.addListener((changes) => {
+    if (changes.wsStatus) renderConnectionStatus(changes.wsStatus.newValue);
+  });
+}
+
+function switchRoomTab(tab) {
+  const chat = tab === "chat";
+  $("#tab-chat-btn").classList.toggle("active", chat);
+  $("#tab-members-btn").classList.toggle("active", !chat);
+  $("#chat-panel").classList.toggle("hidden", !chat);
+  $("#members-panel").classList.toggle("hidden", chat);
+  try {
+    localStorage.setItem("watchparty.roomTab", tab);
+  } catch {
+    // storage unavailable; tab just isn't remembered
+  }
+
+  if (chat) {
+    $("#chat-tab-dot").classList.add("hidden");
+    const msgContainer = $("#chat-messages");
+    msgContainer.scrollTop = msgContainer.scrollHeight;
+    $("#chat-input").focus();
+    if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.sendMessage) {
+      chrome.runtime.sendMessage({ type: "CLEAR_UNREAD_BADGE" });
+    }
+  }
+}
+
+async function pickInitialRoomTab() {
+  let unread = false;
+  try {
+    unread = !!(await chrome.action.getBadgeText({}));
+  } catch {
+    // not running as an extension
+  }
+  if (unread) return "chat";
+  try {
+    return localStorage.getItem("watchparty.roomTab") === "chat" ? "chat" : "members";
+  } catch {
+    return "members";
+  }
+}
+
+// Only redirects right after joining: redirecting on every popup open yanked members
+// off whatever they were doing each time they opened the popup to chat
+async function loadRoomView(roomCode, { justJoined = false } = {}) {
+  const alreadyShowing =
+    roomView.classList.contains("active") && $("#active-room-code").textContent === roomCode;
+
   try {
     const room = await apiGetRoomDetails(roomCode);
     const members = await apiGetRoomMembers(roomCode);
@@ -403,7 +510,8 @@ async function loadRoomView(roomCode) {
     // Populate header
     $("#active-room-name").textContent = room.roomName;
     $("#active-room-code").textContent = room.roomCode;
-    $("#active-room-host").textContent = room.host;
+    $("#active-room-host").textContent = displayName(room.host);
+    $("#active-room-host").title = room.host;
 
     // Lock status
     const lockIcon = $("#room-lock-icon");
@@ -416,86 +524,54 @@ async function loadRoomView(roomCode) {
       lockText.textContent = "Open";
     }
 
-    // ── Now Playing video ──
-    const videoSection = $("#room-video-section");
-    
     // Save currentRoomHost so content script knows if we are host or viewer
     await storage.set({ currentRoomHost: room.host });
 
-    if (room.videoUrl) {
-      videoSection.classList.remove("hidden");
-      $("#room-video-title").textContent = cleanVideoTitle(room.videoUrl);
-      $("#room-video-platform").textContent = room.platform || "Video";
+    const { wsStatus } = await storage.get("wsStatus");
+    renderConnectionStatus(wsStatus);
 
-      // Try to extract a nicer title from the URL
-      if (room.platform === "YOUTUBE" && room.videoUrl.includes("youtube.com")) {
-        // For YouTube, we'll show a friendlier label
-        try {
-          const url = new URL(room.videoUrl);
-          const vid = url.searchParams.get("v");
-          $("#room-video-title").textContent = vid
-            ? `YouTube Video (${vid})`
-            : room.videoUrl;
-        } catch {
-          // Keep the URL as-is
-        }
+    renderRoomVideo(room.videoUrl, room.platform);
+
+    const user = await getStoredUser();
+    const isHost = user.username === room.host;
+    $("#host-controls-chip").classList.toggle("hidden", isHost);
+
+    if (justJoined && !isHost && room.videoUrl) {
+      await detectActiveTabVideo(); // populates detectedVideo
+      const currentVid = detectedVideo && getVideoIdFromUrl(detectedVideo.videoUrl, detectedVideo.platform);
+      if (currentVid !== getVideoIdFromUrl(room.videoUrl, room.platform)) {
+        toast("Opening the host's video...", "info");
+        chrome.runtime.sendMessage({ type: "NAVIGATE_TO_VIDEO", videoUrl: room.videoUrl });
       }
-
-      // Auto-redirect viewer if not on the video URL
-      const user = await getStoredUser();
-      const isHost = (user.username === room.host);
-      if (!isHost) {
-        await detectActiveTabVideo(); // populates detectedVideo
-        
-        let needsRedirect = false;
-        if (!detectedVideo || !detectedVideo.videoUrl) {
-          needsRedirect = true;
-        } else {
-          const currentVid = getVideoIdFromUrl(detectedVideo.videoUrl, detectedVideo.platform);
-          const targetVid = getVideoIdFromUrl(room.videoUrl, room.platform);
-          if (currentVid !== targetVid) {
-            needsRedirect = true;
-          }
-        }
-
-        if (needsRedirect) {
-          toast("Redirecting to host's video...", "info");
-          chrome.runtime.sendMessage({
-            type: "NAVIGATE_TO_VIDEO",
-            videoUrl: room.videoUrl
-          });
-        }
-      }
-    } else {
-      videoSection.classList.add("hidden");
     }
 
-    // Members list
+    // Members list (built with textContent: usernames are user-controlled)
     const membersList = $("#members-list");
     membersList.innerHTML = "";
     members.forEach((m) => {
       const li = document.createElement("li");
       li.className = "member-item";
-      li.innerHTML = `
-        <div class="member-avatar">${m.username.charAt(0)}</div>
-        <span class="member-name">${m.username}</span>
-        <span class="member-role ${m.roomRole === "HOST" ? "host" : "member"}">${m.roomRole}</span>
-        <span class="member-online-dot ${m.online ? "online" : "offline"}"></span>
-      `;
+
+      const avatar = document.createElement("div");
+      avatar.className = "member-avatar";
+      avatar.textContent = displayName(m.username).charAt(0);
+
+      const name = document.createElement("span");
+      name.className = "member-name";
+      name.textContent = displayName(m.username);
+      name.title = m.username;
+
+      const role = document.createElement("span");
+      role.className = `member-role ${m.roomRole === "HOST" ? "host" : "member"}`;
+      role.textContent = m.roomRole;
+
+      const dot = document.createElement("span");
+      dot.className = `member-online-dot ${m.online ? "online" : "offline"}`;
+      dot.title = m.online ? "Online" : "Offline";
+
+      li.append(avatar, name, role, dot);
       membersList.appendChild(li);
     });
-
-    // Reset tab panels
-    $("#tab-members-btn").classList.add("active");
-    $("#tab-chat-btn").classList.remove("active");
-    $("#members-panel").classList.remove("hidden");
-    $("#chat-panel").classList.add("hidden");
-    $("#chat-tab-dot").classList.add("hidden");
-
-    // Clear unread badge in background
-    if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.sendMessage) {
-      chrome.runtime.sendMessage({ type: "CLEAR_UNREAD_BADGE" });
-    }
 
     // Load chat history
     try {
@@ -505,10 +581,12 @@ async function loadRoomView(roomCode) {
       console.warn("Failed to load chat history:", e);
     }
 
-    // Reset invite box
-    $("#invite-link-box").classList.add("hidden");
-
-    showView(roomView);
+    if (!alreadyShowing) {
+      $("#invite-link-box").classList.add("hidden");
+      showView(roomView);
+      // Keep whatever tab the member was on instead of snapping back to Members
+      switchRoomTab(await pickInitialRoomTab());
+    }
   } catch (err) {
     toast(err.message || "Failed to load room", "error");
     await storage.remove("currentRoom");
@@ -548,25 +626,14 @@ $("#copy-invite-btn").addEventListener("click", () => {
 
 // Open room video in a new tab
 $("#open-video-btn").addEventListener("click", () => {
-  const videoSection = $("#room-video-section");
-  if (videoSection.classList.contains("hidden")) return;
+  if (!roomVideoUrl) return;
 
-  // Get the video URL from the room data
-  // We'll re-fetch room details to get the URL
-  const roomCode = $("#active-room-code").textContent;
-  apiGetRoomDetails(roomCode).then((room) => {
-    if (room.videoUrl) {
-      if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.sendMessage) {
-        chrome.runtime.sendMessage({
-          type: "NAVIGATE_TO_VIDEO",
-          videoUrl: room.videoUrl,
-        });
-        toast("Opening video...", "info");
-      } else {
-        window.open(room.videoUrl, "_blank");
-      }
-    }
-  });
+  if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.sendMessage) {
+    chrome.runtime.sendMessage({ type: "NAVIGATE_TO_VIDEO", videoUrl: roomVideoUrl });
+    toast("Opening video...", "info");
+  } else {
+    window.open(roomVideoUrl, "_blank");
+  }
 });
 
 // Leave room — uses the storage abstraction (fixes issue #2)
@@ -596,29 +663,8 @@ $("#leave-room-btn").addEventListener("click", async () => {
 // ═══════════════════════════════════════════════════════════
 
 // Tab Switching
-$("#tab-members-btn").addEventListener("click", () => {
-  $("#tab-members-btn").classList.add("active");
-  $("#tab-chat-btn").classList.remove("active");
-  $("#members-panel").classList.remove("hidden");
-  $("#chat-panel").classList.add("hidden");
-});
-
-$("#tab-chat-btn").addEventListener("click", () => {
-  $("#tab-chat-btn").classList.add("active");
-  $("#tab-members-btn").classList.remove("active");
-  $("#chat-panel").classList.remove("hidden");
-  $("#members-panel").classList.add("hidden");
-  $("#chat-tab-dot").classList.add("hidden");
-
-  // Scroll to bottom
-  const msgContainer = $("#chat-messages");
-  msgContainer.scrollTop = msgContainer.scrollHeight;
-
-  // Clear unread badge in background
-  if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.sendMessage) {
-    chrome.runtime.sendMessage({ type: "CLEAR_UNREAD_BADGE" });
-  }
-});
+$("#tab-members-btn").addEventListener("click", () => switchRoomTab("members"));
+$("#tab-chat-btn").addEventListener("click", () => switchRoomTab("chat"));
 
 
 
@@ -699,10 +745,10 @@ if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.onMessage)
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const activeRoomCode = $("#active-room-code").textContent;
 
+    // The background already moved the tab; just update the card (no refetch, no redirect)
     if (message.type === "ROOM_VIDEO_CHANGED") {
-      if (activeRoomCode) {
-        console.log("Popup received ROOM_VIDEO_CHANGED, reloading room view");
-        loadRoomView(activeRoomCode);
+      if (roomView.classList.contains("active")) {
+        renderRoomVideo(message.videoUrl, message.platform);
       }
     }
 
@@ -727,7 +773,7 @@ if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.onMessage)
       if (indicator.roomCode === activeRoomCode && indicator.username !== currentUserEmail) {
         const typingEl = $("#chat-typing-indicator");
         if (indicator.typing) {
-          $("#chat-typing-text").textContent = `${indicator.username} is typing`;
+          $("#chat-typing-text").textContent = `${displayName(indicator.username)} is typing`;
           typingEl.classList.remove("hidden");
         } else {
           typingEl.classList.add("hidden");
@@ -794,7 +840,7 @@ function createMessageElement(msg) {
   const timeStr = msg.timestamp ? formatMessageTime(msg.timestamp) : "";
 
   div.innerHTML = `
-    <span class="chat-msg-username">${msg.username}</span>
+    <span class="chat-msg-username" title="${escapeHTML(msg.username)}">${escapeHTML(isSelf ? "You" : displayName(msg.username))}</span>
     <div class="chat-msg-bubble">${escapeHTML(msg.message)}</div>
     <span class="chat-msg-time">${timeStr}</span>
   `;

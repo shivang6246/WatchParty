@@ -1,5 +1,6 @@
 package com.example.watchParty.watchParty.Service;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
 
 import org.springframework.cache.annotation.CacheEvict;
@@ -28,17 +29,23 @@ public class PlaybackService {
         this.self = self;
     }
 
-    public void broadcastPlaybackEvent(PlayBackEventdto event) {
+    public void broadcastPlaybackEvent(PlayBackEventdto event, String requester) {
+        // Trust the authenticated session over the client-supplied username
+        if (requester != null) {
+            event.setUsername(requester);
+        }
+
         Room room = repo.findByRoomCode(event.getRoomCode())
                 .orElseThrow(() -> new RuntimeException("Room Not Found"));
 
         // SYNC_REQUEST can be sent by any user (new user requesting current state)
         if ("SYNC_REQUEST".equals(event.getEventType())) {
-            PlaybackStateDto state = self.getPlayBackState(event.getRoomCode());
-            // Send state back to requesting user only
-            messagingTemplate.convertAndSend(
-                    "/topic/room/" + event.getRoomCode() + "/sync",
-                    state);
+            if (requester == null) {
+                return;
+            }
+            PlaybackStateDto state = toStateDto(room);
+            state.setCurrentTime(livePosition(room));
+            messagingTemplate.convertAndSendToUser(requester, "/queue/sync", state);
             return;
         }
 
@@ -66,6 +73,11 @@ public class PlaybackService {
         // Evict playback cache after state update (via proxy)
         self.evictPlaybackCache(event.getRoomCode());
 
+        // room_details carries videoUrl/playbackSpeed; a stale copy sent viewers back to the old video
+        if ("VIDEO_CHANGED".equals(event.getEventType()) || "SPEED_CHANGE".equals(event.getEventType())) {
+            self.evictRoomDetailsCache(event.getRoomCode());
+        }
+
         // Set the updated sequence number on the outgoing event
         event.setSequenceNumber(room.getSequenceNumber());
 
@@ -76,6 +88,11 @@ public class PlaybackService {
 
     @CacheEvict(value = "playback_state", key = "#roomCode")
     public void evictPlaybackCache(String roomCode) {
+        // Intentionally empty — annotation handles cache eviction
+    }
+
+    @CacheEvict(value = "room_details", key = "#roomCode")
+    public void evictRoomDetailsCache(String roomCode) {
         // Intentionally empty — annotation handles cache eviction
     }
 
@@ -96,6 +113,20 @@ public class PlaybackService {
                 break;
 
             case "SPEED_CHANGE":
+                if (event.getPlaybackSpeed() != null) {
+                    room.setPlaybackSpeed(event.getPlaybackSpeed());
+                }
+                // lastPlaybackUpdate is reset below, so the position must be re-anchored too
+                if (event.getCurrentTime() != null) {
+                    room.setCurrentTime(event.getCurrentTime());
+                }
+                break;
+
+            case "HEARTBEAT":
+                room.setCurrentTime(event.getCurrentTime());
+                if (event.getPlaying() != null) {
+                    room.setPlaying(event.getPlaying());
+                }
                 if (event.getPlaybackSpeed() != null) {
                     room.setPlaybackSpeed(event.getPlaybackSpeed());
                 }
@@ -120,6 +151,20 @@ public class PlaybackService {
         Room room = repo.findByRoomCode(roomCode)
                 .orElseThrow(() -> new RuntimeException("Room Not Found"));
 
+        return toStateDto(room);
+    }
+
+    // Extrapolated on the server so clients don't depend on their clock or timezone
+    private double livePosition(Room room) {
+        double position = room.getCurrentTime() != null ? room.getCurrentTime() : 0.0;
+        if (Boolean.TRUE.equals(room.getPlaying()) && room.getLastPlaybackUpdate() != null) {
+            long elapsedMs = Duration.between(room.getLastPlaybackUpdate(), LocalDateTime.now()).toMillis();
+            position += Math.max(0, elapsedMs) / 1000.0 * room.getPlaybackSpeed();
+        }
+        return position;
+    }
+
+    private PlaybackStateDto toStateDto(Room room) {
         PlaybackStateDto response = new PlaybackStateDto();
         response.setPlaying(room.getPlaying());
         response.setCurrentTime(room.getCurrentTime());

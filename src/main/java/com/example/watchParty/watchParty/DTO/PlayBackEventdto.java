@@ -11,7 +11,7 @@ public class PlayBackEventdto {
     private String roomCode;
 
     @NotBlank
-    private String eventType; // PLAY, PAUSE, SEEK, SPEED_CHANGE, BUFFERING, SYNC_REQUEST
+    private String eventType; // PLAY, PAUSE, SEEK, SPEED_CHANGE, BUFFERING, SYNC_REQUEST, HEARTBEAT, VIDEO_CHANGED
 
     @PositiveOrZero
     private Double currentTime;
@@ -22,6 +22,8 @@ public class PlayBackEventdto {
     private Double playbackSpeed;
 
     private Boolean buffering;
+
+    private Boolean playing;
 
     private Long sequenceNumber;
 

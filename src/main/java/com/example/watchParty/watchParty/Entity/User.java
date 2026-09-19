@@ -1,5 +1,6 @@
 package com.example.watchParty.watchParty.Entity;
 
+import com.example.watchParty.watchParty.Enum.AuthProvider;
 import com.example.watchParty.watchParty.Enum.Role;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
@@ -37,6 +38,14 @@ public class User implements UserDetails, Serializable {
     @Column(unique = true, nullable = false)
     private String username;
     private Role role;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    private AuthProvider authProvider = AuthProvider.LOCAL;
+
+    @Column(unique = true)
+    private String googleId;
+
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 

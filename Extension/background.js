@@ -12,10 +12,44 @@ let unreadCount = 0;
 
 let stompClient = null;
 let keepAliveInterval = null;
+let reconnectTimer = null;
+let pendingPlaybackEvents = [];
+
+const RECONNECT_DELAY_MS = 5000;
+// Older queued events would move viewers to a stale position, so they are dropped
+const PENDING_EVENT_TTL_MS = 5000;
 
 chrome.runtime.onInstalled.addListener(() => {
   console.log("WatchParty installed successfully.");
+
+  // Tabs opened before an install/reload keep orphaned content scripts that can't reach the
+  // extension, so those tabs silently stop syncing until refreshed; inject a live copy instead
+  chrome.tabs.query({ url: ["*://*.youtube.com/*", "*://*.netflix.com/*"] }, (tabs) => {
+    (tabs || []).forEach((tab) => {
+      chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["content.js"] }, () => {
+        if (chrome.runtime.lastError) {
+          console.warn(`Could not inject into tab ${tab.id}:`, chrome.runtime.lastError.message);
+        }
+      });
+    });
+  });
 });
+
+// Reuses a YouTube/Netflix tab instead of overwriting whatever tab the user happens to be on
+function openVideoInWatchTab(videoUrl, done) {
+  chrome.tabs.query({}, (tabs) => {
+    const isWatchSite = (t) => t.url && (t.url.includes("youtube.com") || t.url.includes("netflix.com"));
+    const watchTab = tabs.find((t) => t.active && isWatchSite(t)) || tabs.find(isWatchSite);
+
+    if (!watchTab) {
+      chrome.tabs.create({ url: videoUrl }, () => done && done());
+    } else if (watchTab.url === videoUrl) {
+      chrome.tabs.update(watchTab.id, { active: true }, () => done && done());
+    } else {
+      chrome.tabs.update(watchTab.id, { url: videoUrl, active: true }, () => done && done());
+    }
+  });
+}
 
 function startKeepAlive() {
   if (keepAliveInterval) clearInterval(keepAliveInterval);
@@ -35,47 +69,34 @@ function stopKeepAlive() {
 }
 
 function connectWebSocket() {
-  if (stompClient && stompClient.connected) return;
+  // A client that is still connecting counts too, otherwise a second socket leaks
+  if (stompClient) return;
 
-  console.log(`Connecting to WatchParty WS for room: ${currentRoom}`);
+  const room = currentRoom;
+  console.log(`Connecting to WatchParty WS for room: ${room}`);
   chrome.storage.local.set({ wsStatus: "connecting", wsError: null });
 
-  stompClient = new StompClient("ws://54.206.106.162:8081/ws", {
+  const client = new StompClient("ws://localhost:8080/ws", {
     Authorization: "Bearer " + token,
-    roomCode: currentRoom,
+    roomCode: room,
   });
+  client.room = room;
+  client.token = token;
+  stompClient = client;
 
-  stompClient.onConnect = () => {
+  client.onConnect = () => {
+    if (client !== stompClient) return;
     console.log("WS connected successfully inside background service worker!");
     chrome.storage.local.set({ wsStatus: "connected", wsError: null });
     startKeepAlive();
 
-    stompClient.subscribe(`/topic/room/${currentRoom}`, (event) => {
+    client.subscribe(`/topic/room/${room}`, (event) => {
       console.log("Incoming playback event:", event);
 
       if (event.eventType === "VIDEO_CHANGED") {
         if (event.username !== username) {
           console.log("Host changed the video to:", event.videoUrl);
-          chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-            if (tabs && tabs.length > 0) {
-              const activeTab = tabs[0];
-              const url = activeTab.url || "";
-              if (url.includes("youtube.com") || url.includes("netflix.com")) {
-                chrome.tabs.update(activeTab.id, { url: event.videoUrl });
-              } else {
-                chrome.tabs.query({}, (allTabs) => {
-                  const watchTab = allTabs.find(t => t.url && (t.url.includes("youtube.com") || t.url.includes("netflix.com")));
-                  if (watchTab) {
-                    chrome.tabs.update(watchTab.id, { url: event.videoUrl, active: true });
-                  } else {
-                    chrome.tabs.create({ url: event.videoUrl });
-                  }
-                });
-              }
-            } else {
-              chrome.tabs.create({ url: event.videoUrl });
-            }
-          });
+          openVideoInWatchTab(event.videoUrl);
         }
         // Notify popup to refresh UI
         chrome.runtime.sendMessage({
@@ -99,7 +120,8 @@ function connectWebSocket() {
       });
     });
 
-    stompClient.subscribe(`/topic/room/${currentRoom}/sync`, (state) => {
+    // Sync replies are addressed to this user only, not the whole room
+    client.subscribe("/user/queue/sync", (state) => {
       console.log("Incoming sync state:", state);
       // Forward to all matching tabs
       chrome.tabs.query({}, (tabs) => {
@@ -114,7 +136,7 @@ function connectWebSocket() {
       });
     });
 
-    stompClient.subscribe(`/topic/room/${currentRoom}/chat`, (chatMsg) => {
+    client.subscribe(`/topic/room/${room}/chat`, (chatMsg) => {
       console.log("WS chat message received:", chatMsg);
       
       // Increment unread count & show badge
@@ -131,7 +153,7 @@ function connectWebSocket() {
       });
     });
 
-    stompClient.subscribe(`/topic/room/${currentRoom}/typing`, (typingIndicator) => {
+    client.subscribe(`/topic/room/${room}/typing`, (typingIndicator) => {
       chrome.runtime.sendMessage({
         type: "RECEIVE_TYPING_STATUS",
         indicator: typingIndicator,
@@ -140,47 +162,90 @@ function connectWebSocket() {
       });
     });
 
-    if (!isHost) {
-      console.log("Sending SYNC_REQUEST as viewer on connect");
-      stompClient.send("/app/playback", {
-        roomCode: currentRoom,
-        username: username,
-        eventType: "SYNC_REQUEST",
-      });
-    }
+    // Sent unconditionally: isHost may still be stale here, and content.js ignores the reply for the host
+    console.log("Sending SYNC_REQUEST on connect");
+    client.send("/app/playback", {
+      roomCode: room,
+      username: username,
+      eventType: "SYNC_REQUEST",
+    });
+
+    flushPendingPlaybackEvents(client);
   };
 
-  stompClient.onError = (err) => {
+  client.onError = (err) => {
+    if (client !== stompClient) return;
     console.error("WS error:", err);
-    chrome.storage.local.set({ 
-      wsStatus: "error", 
-      wsError: "WebSocket connection error. Please make sure the backend is running." 
+    chrome.storage.local.set({
+      wsStatus: "error",
+      wsError: "WebSocket connection error. Please make sure the backend is running."
     });
     stopKeepAlive();
   };
 
-  stompClient.onDisconnect = () => {
-    console.log("WS disconnected. Will attempt retry in 5s...");
+  client.onDisconnect = () => {
+    // Ignore sockets that were intentionally closed or replaced
+    if (client !== stompClient) return;
+    console.log(`WS disconnected. Will attempt retry in ${RECONNECT_DELAY_MS / 1000}s...`);
+    stompClient = null;
     chrome.storage.local.set({ wsStatus: "disconnected", wsError: "WebSocket disconnected from server." });
     stopKeepAlive();
-    setTimeout(() => {
-      if (currentRoom && token) {
-        connectWebSocket();
-      }
-    }, 5000);
+    scheduleReconnect();
   };
 
-  stompClient.connect();
+  client.connect();
+}
+
+function scheduleReconnect() {
+  clearTimeout(reconnectTimer);
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    if (currentRoom && token) {
+      connectWebSocket();
+    }
+  }, RECONNECT_DELAY_MS);
 }
 
 function disconnectWebSocket() {
-  if (stompClient) {
-    console.log("Disconnecting WatchParty WS client");
-    stompClient.disconnect();
-    stompClient = null;
-    chrome.storage.local.set({ wsStatus: "disconnected", wsError: null });
-  }
+  clearTimeout(reconnectTimer);
+  reconnectTimer = null;
   stopKeepAlive();
+
+  const client = stompClient;
+  if (!client) return;
+  console.log("Disconnecting WatchParty WS client");
+  stompClient = null;
+  client.disconnect();
+  chrome.storage.local.set({ wsStatus: "disconnected", wsError: null });
+}
+
+function freshPendingEvents() {
+  const cutoff = Date.now() - PENDING_EVENT_TTL_MS;
+  return pendingPlaybackEvents.filter((e) => e.queuedAt >= cutoff);
+}
+
+// roomCode/username are filled in at send time: right after the worker wakes up they aren't loaded yet
+function sendPlaybackEvent(fields) {
+  if (stompClient && stompClient.connected) {
+    stompClient.send("/app/playback", { roomCode: currentRoom, username: username, ...fields });
+    return;
+  }
+
+  // Heartbeats are periodic, so a queued one would only be stale
+  if (fields.eventType !== "HEARTBEAT") {
+    pendingPlaybackEvents = freshPendingEvents();
+    pendingPlaybackEvents.push({ fields, queuedAt: Date.now() });
+  }
+  checkConnection();
+}
+
+function flushPendingPlaybackEvents(client) {
+  const events = freshPendingEvents();
+  pendingPlaybackEvents = [];
+  events.forEach((e) => {
+    console.log("Sending queued playback event:", e.fields.eventType);
+    client.send("/app/playback", { roomCode: client.room, username: username, ...e.fields });
+  });
 }
 
 async function checkConnection() {
@@ -190,8 +255,6 @@ async function checkConnection() {
     "jwt",
     "username",
   ]);
-
-  const oldRoom = currentRoom;
 
   currentRoom = data.currentRoom;
   currentRoomHost = data.currentRoomHost;
@@ -208,7 +271,8 @@ async function checkConnection() {
     username,
   });
 
-  if (oldRoom && oldRoom !== currentRoom) {
+  // Compare against the client itself: message handlers may have already mutated currentRoom
+  if (stompClient && (stompClient.room !== currentRoom || stompClient.token !== token)) {
     disconnectWebSocket();
   }
 
@@ -277,40 +341,37 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       console.log("Detected video:", message.platform, message.videoId);
       break;
 
+    // The backend enforces host-only control; gating on isHost here dropped events right after a worker restart
     case "HOST_VIDEO_CHANGED":
-      if (stompClient && stompClient.connected && isHost) {
-        console.log("Relaying host video change to backend:", message.videoUrl);
-        stompClient.send("/app/playback", {
-          roomCode: currentRoom,
-          username: username,
-          eventType: "VIDEO_CHANGED",
-          videoUrl: message.videoUrl,
-          platform: message.platform,
-        });
-      }
+      console.log("Relaying host video change to backend:", message.videoUrl);
+      sendPlaybackEvent({
+        eventType: "VIDEO_CHANGED",
+        videoUrl: message.videoUrl,
+        platform: message.platform,
+      });
       break;
 
     case "SEND_PLAYBACK_EVENT":
-      if (stompClient && stompClient.connected) {
-        console.log("Relaying playback event to backend:", message);
-        stompClient.send("/app/playback", {
-          roomCode: currentRoom,
-          username: username,
-          eventType: message.eventType,
-          currentTime: message.currentTime,
-          playbackSpeed: message.playbackSpeed || 1.0,
-        });
-      }
+      console.log("Relaying playback event to backend:", message);
+      sendPlaybackEvent({
+        eventType: message.eventType,
+        currentTime: message.currentTime,
+        playbackSpeed: message.playbackSpeed || 1.0,
+        playing: message.playing,
+      });
       break;
 
     case "REQUEST_SYNC":
-      if (stompClient && stompClient.connected && !isHost) {
+      if (stompClient && stompClient.connected) {
         console.log("Relaying sync request to backend");
         stompClient.send("/app/playback", {
           roomCode: currentRoom,
           username: username,
           eventType: "SYNC_REQUEST",
         });
+      } else {
+        // A SYNC_REQUEST is sent automatically once connected
+        checkConnection();
       }
       break;
 
@@ -410,18 +471,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return true; // keep channel open for async response
     }
 
-    // ── Navigate active tab to a video URL ──
     case "NAVIGATE_TO_VIDEO": {
       if (message.videoUrl) {
-        chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-          if (tabs && tabs.length > 0) {
-            chrome.tabs.update(tabs[0].id, { url: message.videoUrl });
-            sendResponse({ ok: true });
-          } else {
-            chrome.tabs.create({ url: message.videoUrl });
-            sendResponse({ ok: true });
-          }
-        });
+        openVideoInWatchTab(message.videoUrl, () => sendResponse({ ok: true }));
       }
       return true; // keep channel open for async response
     }
@@ -434,6 +486,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   return true;
+});
+
+// Chrome stops idle MV3 workers, which ends the retry loop; the alarm wakes it to reconnect
+chrome.alarms.create("wp-reconnect", { periodInMinutes: 0.5 });
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === "wp-reconnect") {
+    checkConnection();
+  }
 });
 
 // Run connection check on load

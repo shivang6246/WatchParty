@@ -19,4 +19,6 @@ public interface UserRepo extends JpaRepository<User, Long> {
 
     boolean existsByUsername(String username);
 
+    Optional<User> findByGoogleId(String googleId);
+
 }

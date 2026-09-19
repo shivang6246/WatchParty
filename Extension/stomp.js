@@ -70,12 +70,13 @@ class StompClient {
         if (command === "CONNECTED") {
           console.log("StompClient CONNECTED successfully");
           this.connected = true;
-          if (this.onConnect) this.onConnect();
-          
-          // Resubscribe to existing subscriptions if reconnecting
+
+          // Resubscribe first; subscriptions made inside onConnect send their own SUBSCRIBE
           for (let subId in this.subscriptions) {
             this.socket.send(`SUBSCRIBE\nid:${subId}\ndestination:${this.subscriptions[subId].destination}\n\n\u0000`);
           }
+
+          if (this.onConnect) this.onConnect();
         } else if (command === "ERROR") {
           console.error("StompClient ERROR frame:", body);
           if (this.onError) this.onError(new Error(body || "STOMP ERROR"));

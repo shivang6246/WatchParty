@@ -3,7 +3,7 @@
    Handles all communication with the Spring Boot backend
    ═══════════════════════════════════════════════════════════ */
 
-const API_BASE_URL = "http://54.206.106.162:8081/api";
+const API_BASE_URL = "http://localhost:8080/api";
 
 // ── Storage Compatibility Layer ──────────────────────────
 // Falls back to localStorage when chrome.storage is unavailable
@@ -69,7 +69,7 @@ async function saveSession(authResponse) {
  * Clear all stored session data on logout
  */
 async function clearSession() {
-  await storage.remove(["jwt", "username", "email", "role", "currentRoom"]);
+  await storage.remove(["jwt", "username", "email", "role", "currentRoom", "currentRoomHost"]);
 }
 
 /**
@@ -182,7 +182,7 @@ async function apiCreateRoom(roomName, locked, videoUrl, platform) {
     method: "POST",
     body: JSON.stringify(body),
   });
-  await storage.set({ currentRoom: data.roomCode });
+  await storage.set({ currentRoom: data.roomCode, currentRoomHost: data.host });
   return data;
 }
 
@@ -191,7 +191,7 @@ async function apiJoinRoom(roomCode) {
     method: "POST",
     body: JSON.stringify({ roomCode }),
   });
-  await storage.set({ currentRoom: data.roomCode });
+  await storage.set({ currentRoom: data.roomCode, currentRoomHost: data.host });
   return data;
 }
 
@@ -199,7 +199,7 @@ async function apiJoinByInvite(inviteToken) {
   const data = await apiRequest(`/room/join/invite/${inviteToken}`, {
     method: "POST",
   });
-  await storage.set({ currentRoom: data.roomCode });
+  await storage.set({ currentRoom: data.roomCode, currentRoomHost: data.host });
   return data;
 }
 
@@ -220,7 +220,7 @@ async function apiLeaveRoom(roomCode) {
     method: "POST",
     body: JSON.stringify({ roomCode }),
   });
-  await storage.remove("currentRoom");
+  await storage.remove(["currentRoom", "currentRoomHost"]);
   return data;
 }
 
@@ -229,7 +229,7 @@ async function apiEndRoom(roomCode) {
     method: "POST",
     body: JSON.stringify({ roomCode }),
   });
-  await storage.remove("currentRoom");
+  await storage.remove(["currentRoom", "currentRoomHost"]);
   return data;
 }
 
@@ -251,4 +251,65 @@ async function apiUpdateRole(roomCode, username, roomRole) {
 
 async function apiGetChatHistory(roomCode, page = 0, size = 50) {
   return apiRequest(`/chat/${roomCode}/history?page=${page}&size=${size}`);
+}
+
+// ── Google OAuth2 ────────────────────────────────────────
+
+// TODO: Replace with your actual Google Cloud Console Client ID
+const GOOGLE_CLIENT_ID = "your-google-client-id.apps.googleusercontent.com";
+
+/**
+ * Initiate Google OAuth2 login via chrome.identity.launchWebAuthFlow.
+ * Gets an authorization code, sends it to the backend, and saves the session.
+ */
+async function apiGoogleLogin() {
+  // Build the redirect URI from the extension's ID
+  const redirectUri = chrome.identity.getRedirectURL();
+
+  // Google OAuth2 authorize URL
+  const authUrl = new URL("https://accounts.google.com/o/oauth2/v2/auth");
+  authUrl.searchParams.set("client_id", GOOGLE_CLIENT_ID);
+  authUrl.searchParams.set("redirect_uri", redirectUri);
+  authUrl.searchParams.set("response_type", "code");
+  authUrl.searchParams.set("scope", "openid email profile");
+  authUrl.searchParams.set("access_type", "offline");
+  authUrl.searchParams.set("prompt", "consent");
+
+  // Launch the Google consent screen in a popup
+  const responseUrl = await new Promise((resolve, reject) => {
+    chrome.identity.launchWebAuthFlow(
+      { url: authUrl.toString(), interactive: true },
+      (callbackUrl) => {
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message));
+          return;
+        }
+        if (!callbackUrl) {
+          reject(new Error("Google sign-in was cancelled"));
+          return;
+        }
+        resolve(callbackUrl);
+      }
+    );
+  });
+
+  // Extract the authorization code from the callback URL
+  const url = new URL(responseUrl);
+  const code = url.searchParams.get("code");
+  if (!code) {
+    throw new Error("No authorization code received from Google");
+  }
+
+  // Send the code to our backend
+  const data = await apiRequest("/auth/oauth2/google", {
+    method: "POST",
+    body: JSON.stringify({
+      code: code,
+      redirectUri: redirectUri,
+    }),
+  });
+
+  // Save session (same as email login)
+  await saveSession(data);
+  return data;
 }

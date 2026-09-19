@@ -1,5 +1,7 @@
 package com.example.watchParty.watchParty.Controller;
 
+import java.security.Principal;
+
 import org.springframework.messaging.handler.annotation.MessageMapping;
 import org.springframework.stereotype.Controller;
 
@@ -15,9 +17,9 @@ public class PlaybackController {
     private final PlaybackService playbackService;
 
     @MessageMapping("/playback")
-    public void handleEvent(PlayBackEventdto event) {
+    public void handleEvent(PlayBackEventdto event, Principal principal) {
 
-        playbackService.broadcastPlaybackEvent(event);
+        playbackService.broadcastPlaybackEvent(event, principal != null ? principal.getName() : null);
 
     }
 
