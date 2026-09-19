@@ -3,7 +3,7 @@
    Handles all communication with the Spring Boot backend
    ═══════════════════════════════════════════════════════════ */
 
-const API_BASE_URL = "http://localhost:8080/api";
+const API_BASE_URL = "http://15.252.237.89:8081/api";
 
 // ── Storage Compatibility Layer ──────────────────────────
 // Falls back to localStorage when chrome.storage is unavailable

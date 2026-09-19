@@ -76,7 +76,7 @@ function connectWebSocket() {
   console.log(`Connecting to WatchParty WS for room: ${room}`);
   chrome.storage.local.set({ wsStatus: "connecting", wsError: null });
 
-  const client = new StompClient("ws://localhost:8080/ws", {
+  const client = new StompClient("ws://15.252.237.89:8081/ws", {
     Authorization: "Bearer " + token,
     roomCode: room,
   });
