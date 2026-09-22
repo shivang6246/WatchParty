@@ -155,12 +155,34 @@ async function apiLogin(email, password) {
   return data;
 }
 
+/**
+ * Step 1 of sign-up — asks the backend to email a 6-digit code.
+ * No account exists until apiVerifyRegistration() succeeds.
+ */
 async function apiRegister(username, email, password) {
-  const data = await apiRequest("/auth/register", {
+  return apiRequest("/auth/register", {
     method: "POST",
     body: JSON.stringify({ username, email, password }),
   });
+}
+
+/**
+ * Step 2 of sign-up — a correct code creates the account and signs the user in.
+ */
+async function apiVerifyRegistration(email, otp) {
+  const data = await apiRequest("/auth/register/verify", {
+    method: "POST",
+    body: JSON.stringify({ email, otp }),
+  });
+  await saveSession(data);
   return data;
+}
+
+async function apiResendRegistrationOtp(email) {
+  return apiRequest("/auth/register/resend", {
+    method: "POST",
+    body: JSON.stringify({ email }),
+  });
 }
 
 /**

@@ -13,6 +13,11 @@ services:
       - REDIS_PORT=6379
       - JWT_SECRET=bXlTdXBlclNlY3JldEtleUZvcldhdGNoUGFydHlBcHBsaWNhdGlvbjIwMjY=
       - CORS_ORIGINS=http://localhost:3000
+      # Mail: read from the host environment, never hardcoded here
+      - MAIL_ENABLED=${MAIL_ENABLED:-false}
+      - MAIL_USERNAME=${MAIL_USERNAME:-}
+      - MAIL_PASSWORD=${MAIL_PASSWORD:-}
+      - MAIL_FROM=${MAIL_FROM:-}
     depends_on:
       - postgres
       - redis

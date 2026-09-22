@@ -2,7 +2,11 @@ package com.example.watchParty.watchParty.Service;
 
 import com.example.watchParty.watchParty.DTO.AuthResponseDto;
 import com.example.watchParty.watchParty.DTO.LoginRequestDto;
+import com.example.watchParty.watchParty.DTO.OtpResponseDto;
+import com.example.watchParty.watchParty.DTO.PendingRegistration;
 import com.example.watchParty.watchParty.DTO.RegisterRequestDto;
+import com.example.watchParty.watchParty.DTO.ResendOtpRequestDto;
+import com.example.watchParty.watchParty.DTO.VerifyOtpRequestDto;
 import com.example.watchParty.watchParty.Entity.User;
 import com.example.watchParty.watchParty.Enum.AuthProvider;
 import com.example.watchParty.watchParty.Enum.Role;
@@ -25,6 +29,7 @@ public class AuthService {
     private final PasswordEncoder passwordEncoder;
     private final AuthenticationManager authenticationManager;
     private final jwtService jwtService;
+    private final OtpService otpService;
 
     public AuthResponseDto login(LoginRequestDto request) {
         // Authenticate using AuthenticationManager (validates email + password via Spring Security)
@@ -49,21 +54,41 @@ public class AuthService {
                 .build();
     }
 
-    public AuthResponseDto register(RegisterRequestDto request) {
+    /**
+     * Step 1 of sign-up: validate the details and email a verification code.
+     * No user row is created until the code comes back in
+     * {@link #verifyRegistrationOtp}.
+     */
+    public OtpResponseDto register(RegisterRequestDto request) {
 
-        if (userRepo.existsByEmail(request.getEmail())) {
-            throw new RuntimeException("Email already exists");
-        }
+        ensureAvailable(request.getEmail(), request.getUsername());
 
-        if (userRepo.existsByUsername(request.getUsername())) {
-            throw new RuntimeException("Username already exists");
-        }
+        long expiresIn = otpService.startVerification(
+                request.getUsername(), request.getEmail(), request.getPassword());
+
+        return OtpResponseDto.builder()
+                .message("We sent a 6-digit code to " + request.getEmail())
+                .email(request.getEmail())
+                .expiresInSeconds(expiresIn)
+                .build();
+    }
+
+    /**
+     * Step 2 of sign-up: exchange a valid code for a real account and a JWT.
+     */
+    public AuthResponseDto verifyRegistrationOtp(VerifyOtpRequestDto request) {
+
+        PendingRegistration pending = otpService.consumeVerified(request.getEmail(), request.getOtp());
+
+        // Re-check: the email or username may have been claimed while the code
+        // was in flight.
+        ensureAvailable(pending.getEmail(), pending.getUsername());
 
         User user = new User();
 
-        user.setUsername(request.getUsername());
-        user.setEmail(request.getEmail());
-        user.setPassword(passwordEncoder.encode(request.getPassword()));
+        user.setUsername(pending.getUsername());
+        user.setEmail(pending.getEmail());
+        user.setPassword(pending.getPasswordHash()); // already encoded
         user.setRole(Role.USER);
         user.setAuthProvider(AuthProvider.LOCAL);
         user.setCreatedAt(LocalDateTime.now());
@@ -79,6 +104,30 @@ public class AuthService {
                 .email(savedUser.getEmail())
                 .role(savedUser.getRole())
                 .build();
+    }
+
+    /**
+     * Send a replacement code for a sign-up that is still awaiting verification.
+     */
+    public OtpResponseDto resendRegistrationOtp(ResendOtpRequestDto request) {
+
+        long expiresIn = otpService.resend(request.getEmail());
+
+        return OtpResponseDto.builder()
+                .message("We sent a new code to " + request.getEmail())
+                .email(request.getEmail())
+                .expiresInSeconds(expiresIn)
+                .build();
+    }
+
+    private void ensureAvailable(String email, String username) {
+        if (userRepo.existsByEmail(email)) {
+            throw new RuntimeException("Email already exists");
+        }
+
+        if (userRepo.existsByUsername(username)) {
+            throw new RuntimeException("Username already exists");
+        }
     }
 
     public List<AuthResponseDto> getAllUsers() {

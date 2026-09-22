@@ -234,6 +234,17 @@ body::before {
   color: var(--brand-primary);
 }
 
+/* ── OTP field ─────────────────────────────────────────── */
+.input-group input.otp-input {
+  padding-left: 44px;
+  text-align: center;
+  font-size: 1.4rem;
+  font-weight: 600;
+  letter-spacing: 0.5em;
+  /* Offset the letter-spacing trailing gap so digits look centred */
+  text-indent: 0.5em;
+}
+
 /* ── Buttons ───────────────────────────────────────────── */
 .btn {
   display: inline-flex;
@@ -288,6 +299,12 @@ body::before {
   padding: 10px;
   font-size: 0.82rem;
   font-weight: 500;
+}
+
+.btn-ghost:disabled {
+  color: var(--text-muted);
+  cursor: default;
+  pointer-events: none;
 }
 
 .btn-ghost:hover {

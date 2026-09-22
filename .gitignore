@@ -35,3 +35,7 @@ build/
 ### Secrets ###
 *.pem
 *.key
+
+### Local config (may contain secrets) ###
+local.properties
+application-local.properties

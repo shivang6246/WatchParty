@@ -155,6 +155,50 @@
         </div>
       </section>
 
+      <!-- ═══════════════════ VERIFY EMAIL VIEW ═══════════════════ -->
+      <section id="verify-view" class="view">
+        <div class="view-card glass">
+          <h2 class="view-title">Verify your email</h2>
+          <p class="view-subtitle">
+            Enter the 6-digit code we sent to
+            <strong id="verify-email-label"></strong>
+          </p>
+
+          <form id="verify-form" class="form" autocomplete="off">
+            <div class="input-group">
+              <span class="material-icons-round input-icon">pin</span>
+              <input
+                type="text"
+                id="verify-otp"
+                class="otp-input"
+                placeholder="000000"
+                inputmode="numeric"
+                pattern="\d{6}"
+                maxlength="6"
+                required
+              />
+            </div>
+
+            <button type="submit" id="verify-btn" class="btn btn-primary">
+              <span class="btn-text">Verify &amp; Create Account</span>
+              <span class="btn-loader hidden">
+                <span class="dot-pulse"></span>
+              </span>
+            </button>
+          </form>
+
+          <p class="view-subtitle" id="verify-expiry"></p>
+
+          <button type="button" id="resend-otp-btn" class="btn btn-ghost">
+            Resend code
+          </button>
+
+          <button type="button" id="back-to-register" class="btn btn-ghost">
+            Use a different email
+          </button>
+        </div>
+      </section>
+
       <!-- ═══════════════════ DASHBOARD VIEW ═══════════════════ -->
       <section id="dashboard-view" class="view">
         <div class="view-card glass">

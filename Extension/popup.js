@@ -12,6 +12,7 @@ let currentUserEmail = "";
 // Views
 const loginView = $("#login-view");
 const registerView = $("#register-view");
+const verifyView = $("#verify-view");
 const dashboardView = $("#dashboard-view");
 const createRoomView = $("#create-room-view");
 const joinRoomView = $("#join-room-view");
@@ -282,16 +283,112 @@ $("#register-form").addEventListener("submit", async (e) => {
 
   setLoading(btn, true);
   try {
-    await apiRegister(username, email, password);
-    toast("Account created! Please sign in.", "success");
-    showView(loginView);
-    // Pre-fill email for convenience
-    $("#login-email").value = email;
+    const res = await apiRegister(username, email, password);
+    toast(res.message || "Verification code sent", "success");
+    openVerifyView(email, res.expiresInSeconds);
   } catch (err) {
     toast(err.message || "Registration failed", "error");
   } finally {
     setLoading(btn, false);
   }
+});
+
+// ═══════════════════════════════════════════════════════════
+//  AUTH — EMAIL VERIFICATION (OTP)
+// ═══════════════════════════════════════════════════════════
+
+// Email awaiting verification, carried from the register step
+let pendingVerifyEmail = "";
+let resendCooldownTimer = null;
+
+function openVerifyView(email, expiresInSeconds) {
+  pendingVerifyEmail = email;
+  $("#verify-email-label").textContent = email;
+  $("#verify-otp").value = "";
+
+  const minutes = Math.round((expiresInSeconds || 600) / 60);
+  $("#verify-expiry").textContent = `The code expires in ${minutes} minute(s).`;
+
+  showView(verifyView);
+  $("#verify-otp").focus();
+  startResendCooldown(60);
+}
+
+/** Disable the resend button and count down, mirroring the server cooldown. */
+function startResendCooldown(seconds) {
+  const btn = $("#resend-otp-btn");
+  if (resendCooldownTimer) clearInterval(resendCooldownTimer);
+
+  let remaining = seconds;
+  const tick = () => {
+    if (remaining <= 0) {
+      clearInterval(resendCooldownTimer);
+      resendCooldownTimer = null;
+      btn.disabled = false;
+      btn.textContent = "Resend code";
+      return;
+    }
+    btn.disabled = true;
+    btn.textContent = `Resend code in ${remaining}s`;
+    remaining -= 1;
+  };
+
+  tick();
+  resendCooldownTimer = setInterval(tick, 1000);
+}
+
+// Keep the OTP field to digits only
+$("#verify-otp").addEventListener("input", (e) => {
+  e.target.value = e.target.value.replace(/\D/g, "").slice(0, 6);
+});
+
+$("#verify-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const btn = $("#verify-btn");
+  const otp = $("#verify-otp").value.trim();
+
+  if (otp.length !== 6) {
+    toast("Enter the 6-digit code", "error");
+    return;
+  }
+
+  setLoading(btn, true);
+  try {
+    // A correct code creates the account and signs us straight in
+    await apiVerifyRegistration(pendingVerifyEmail, otp);
+    toast("Email verified — welcome! 🎉", "success");
+    await populateUserInfo();
+
+    await detectActiveTabVideo();
+    updateVideoUI();
+
+    showView(dashboardView);
+  } catch (err) {
+    toast(err.message || "Verification failed", "error");
+    $("#verify-otp").value = "";
+    $("#verify-otp").focus();
+  } finally {
+    setLoading(btn, false);
+  }
+});
+
+$("#resend-otp-btn").addEventListener("click", async () => {
+  const btn = $("#resend-otp-btn");
+  btn.disabled = true;
+  try {
+    const res = await apiResendRegistrationOtp(pendingVerifyEmail);
+    toast(res.message || "New code sent", "success");
+    startResendCooldown(60);
+  } catch (err) {
+    toast(err.message || "Could not resend the code", "error");
+    btn.disabled = false;
+  }
+});
+
+$("#back-to-register").addEventListener("click", () => {
+  if (resendCooldownTimer) clearInterval(resendCooldownTimer);
+  resendCooldownTimer = null;
+  showView(registerView);
 });
 
 // ═══════════════════════════════════════════════════════════
