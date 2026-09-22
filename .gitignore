@@ -39,3 +39,6 @@ build/
 ### Local config (may contain secrets) ###
 local.properties
 application-local.properties
+.env
+.env.*
+!.env.example
